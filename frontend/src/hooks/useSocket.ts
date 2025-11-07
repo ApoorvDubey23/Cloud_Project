@@ -11,7 +11,7 @@ export const useSocket = () => {
     if (!user) return;
 
     // Replace with your actual backend URL
-    const SOCKET_URL = 'http://13.126.62.128';
+    const SOCKET_URL = 'https://cloud-project-ld1e.vercel.app/';
     
     const socket = io(`${SOCKET_URL}/track`, {
       path: '/ws',
