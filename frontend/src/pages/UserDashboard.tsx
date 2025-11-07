@@ -1,87 +1,116 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSocket } from '@/hooks/useSocket';
 import { VehicleMap } from '@/components/VehicleMap';
 import { VehicleList } from '@/components/VehicleList';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { LogOut, Plus, Menu, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface VehicleData {
   vehicleId: string;
-  lat: number;
-  lng: number;
-  speed: number;
-  ts: number;
+  lat?: number;
+  lng?: number;
+  speed?: number;
+  ts?: number;
   status: 'accepted' | 'pending';
 }
+
+type MapView = { center: [number, number]; zoom: number };
 
 const UserDashboard = () => {
   const { user, logout } = useAuth();
   const { socket, connected } = useSocket();
+
   const [vehicles, setVehicles] = useState<VehicleData[]>([]);
   const [newVehicleId, setNewVehicleId] = useState('');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  // ---- Persisted map view (center + zoom) ----
+  const [mapView, setMapView] = useState<MapView | null>(null);
+
+  // Helpful derived list: vehicles that have coords AND are accepted
+  const activeVehicles = useMemo(
+    () => vehicles.filter((v) => v.status === 'accepted' && v.lat != null && v.lng != null) as Required<VehicleData>[],
+    [vehicles]
+  );
+
+  // Initialize map view ONCE when the first active vehicle arrives
+  useEffect(() => {
+    if (!mapView && activeVehicles.length > 0) {
+      const v = activeVehicles[0];
+      setMapView({ center: [v.lat!, v.lng!], zoom: 14 });
+    }
+  }, [activeVehicles, mapView]);
+
+  // ---- Socket handlers ----
   useEffect(() => {
     if (!socket || !user) return;
 
-    // Listen for live location updates
-    socket.on('location:live', (data: VehicleData) => {
-      console.log('📍 Location update:', data);
+    const onLive = (data: VehicleData) => {
       setVehicles((prev) => {
-        const existing = prev.find((v) => v.vehicleId === data.vehicleId);
-        if (existing) {
-          return prev.map((v) =>
-            v.vehicleId === data.vehicleId ? { ...data, status: 'accepted' } : v
-          );
+        const idx = prev.findIndex((v) => v.vehicleId === data.vehicleId);
+        if (idx >= 0) {
+          const copy = prev.slice();
+          copy[idx] = { ...copy[idx], ...data, status: 'accepted' };
+          return copy;
         }
         return [...prev, { ...data, status: 'accepted' }];
       });
-    });
+    };
 
-    // Listen for permission granted
-    socket.on('permission:granted', ({ vehicleId }: { vehicleId: string }) => {
-      console.log('✅ Permission granted:', vehicleId);
+    const onGranted = ({ vehicleId }: { vehicleId: string }) => {
       toast.success(`Access granted for vehicle ${vehicleId}`);
-      setVehicles((prev) =>
-        prev.map((v) => (v.vehicleId === vehicleId ? { ...v, status: 'accepted' } : v))
-      );
-    });
+      setVehicles((prev) => prev.map((v) =>
+        v.vehicleId === vehicleId ? { ...v, status: 'accepted' } : v
+      ));
+    };
+
+    socket.on('location:live', onLive);
+    socket.on('permission:granted', onGranted);
 
     return () => {
-      socket.off('location:live');
-      socket.off('permission:granted');
+      socket.off('location:live', onLive);
+      socket.off('permission:granted', onGranted);
     };
   }, [socket, user]);
 
+  // ---- Initial permissions fetch ----
   useEffect(() => {
-    // Fetch user permissions on mount
-    if (user) {
-      fetch(`http://13.126.62.128/api/user/${user.id}/permissions`)
-        .then((res) => res.json())
-        .then((data) => {
-          const accepted = data.accepted?.map((vid: string) => ({
-            vehicleId: vid,
-            status: 'accepted' as const,
-          })) || [];
-          const pending = data.pending?.map((vid: string) => ({
-            vehicleId: vid,
-            status: 'pending' as const,
-          })) || [];
-          setVehicles([...accepted, ...pending]);
-        })
-        .catch(console.error);
-    }
+    if (!user) return;
+
+    // NOTE: if this endpoint is HTTP, your HTTPS app will block it (mixed content).
+    // Prefer using your domain over HTTPS.
+    fetch(`https://13.126.62.128/api/user/${user.id}/permissions`) // <-- change to https on your server
+      .then((res) => res.json())
+      .then((data) => {
+        const accepted = (data.accepted || []).map((vid: string) => ({
+          vehicleId: vid,
+          status: 'accepted' as const,
+        }));
+        const pending = (data.pending || []).map((vid: string) => ({
+          vehicleId: vid,
+          status: 'pending' as const,
+        }));
+        setVehicles([...accepted, ...pending]);
+      })
+      .catch(console.error);
   }, [user]);
 
   const handleRequestAccess = (vehicleId: string) => {
-    if (!socket) return;
+    if (!socket || !user) return;
 
-    socket.emit('location:request', { vehicleId, userId: user.id }, (response) => {
+    socket.emit('location:request', { vehicleId, userId: user.id }, (response: any) => {
       if (response?.ok) {
         toast.success('Access request sent');
         setVehicles((prev) =>
@@ -103,7 +132,11 @@ const UserDashboard = () => {
     }
   };
 
-  const activeVehicles = vehicles.filter((v) => v.status === 'accepted' && v.lat && v.lng);
+  // Optional: when user selects a vehicle in the list, you can recenter intentionally
+  const handleSelectVehicle = (id: string) => {
+    const v = activeVehicles.find((x) => x.vehicleId === id);
+    if (v) setMapView((prev) => ({ center: [v.lat!, v.lng!], zoom: prev?.zoom ?? 16 }));
+  };
 
   return (
     <div className="h-screen flex flex-col bg-background">
@@ -137,9 +170,7 @@ const UserDashboard = () => {
       <div className="flex-1 flex overflow-hidden">
         {/* Sidebar */}
         <aside
-          className={`${
-            sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-          } lg:translate-x-0 transition-transform fixed lg:relative z-20 w-80 bg-card border-r border-border p-6 overflow-y-auto h-[calc(100vh-73px)]`}
+          className={`${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 transition-transform fixed lg:relative z-20 w-80 bg-card border-r border-border p-6 overflow-y-auto h-[calc(100vh-73px)]`}
         >
           <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold text-foreground">My Vehicles</h2>
@@ -174,19 +205,21 @@ const UserDashboard = () => {
 
           <VehicleList
             vehicles={vehicles}
-            onSelectVehicle={(id) => console.log('Selected:', id)}
+            onSelectVehicle={handleSelectVehicle}
             onRequestAccess={handleRequestAccess}
           />
         </aside>
 
         {/* Map */}
         <main className="flex-1 p-6">
-  <div
-    className="h-full bg-card rounded-lg border border-border overflow-hidden relative z-0"
-  >
-    <VehicleMap vehicles={activeVehicles} />
-  </div>
-</main>
+          <div className="h-full bg-card rounded-lg border border-border overflow-hidden relative z-0">
+            <VehicleMap
+              vehicles={activeVehicles as Required<VehicleData>[]}
+              view={mapView}
+              onViewChange={setMapView}
+            />
+          </div>
+        </main>
       </div>
     </div>
   );
