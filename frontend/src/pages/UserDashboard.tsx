@@ -91,7 +91,7 @@ const UserDashboard = () => {
 
     // NOTE: if this endpoint is HTTP, your HTTPS app will block it (mixed content).
     // Prefer using your domain over HTTPS.
-    fetch(`https://cloud-project-ld1e.vercel.app/api/user/${user.id}/permissions`) // <-- change to https on your server
+    fetch(`http://13.126.62.128/api/user/${user.id}/permissions`) // <-- change to https on your server
       .then((res) => res.json())
       .then((data) => {
         const accepted = (data.accepted || []).map((vid: string) => ({

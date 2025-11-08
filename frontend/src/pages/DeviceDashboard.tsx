@@ -128,7 +128,7 @@ const DeviceDashboard = () => {
   // fetch current permissions
   useEffect(() => {
     if (user) {
-      fetch(`https://cloud-project-ld1e.vercel.app/api/vehicle/${user.id}/permissions`)
+      fetch(`http://13.126.62.128/api/vehicle/${user.id}/permissions`)
         .then((res) => res.json())
         .then((data) => {
           setAcceptedUsers(data.accepted || []);
