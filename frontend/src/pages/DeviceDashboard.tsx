@@ -13,7 +13,7 @@ interface PermissionRequest {
   ts: number;
 }
 
-const DEFAULT_POS = { lat: 29.5555, lng: 77.2090 }; 
+const DEFAULT_POS = { lat: 25.2620, lng: 82.9935 }; 
 const TWO_SECONDS = 2000;
 
 const DeviceDashboard = () => {
